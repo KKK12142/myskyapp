@@ -1,4 +1,1 @@
-# skyview
-# skyview
-# myskyapp
 # myskyapp
