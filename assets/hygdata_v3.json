@@ -1,0 +1,162 @@
+[
+  {
+    "id": 1,
+    "proper": "태양",
+    "name": "Sun",
+    "ra": 6.5,
+    "dec": 23.4,
+    "mag": -26.7
+  },
+  {
+    "id": 2,
+    "proper": "달",
+    "name": "Moon",
+    "ra": 8.2,
+    "dec": 18.7,
+    "mag": -12.6
+  },
+  {
+    "id": 3,
+    "proper": "수성",
+    "name": "Mercury",
+    "ra": 7.1,
+    "dec": 5.8,
+    "mag": -0.5
+  },
+  {
+    "id": 4,
+    "proper": "금성",
+    "name": "Venus",
+    "ra": 9.3,
+    "dec": 12.1,
+    "mag": -4.4
+  },
+  {
+    "id": 5,
+    "proper": "화성",
+    "name": "Mars",
+    "ra": 11.5,
+    "dec": -3.8,
+    "mag": 0.7
+  },
+  {
+    "id": 6,
+    "proper": "목성",
+    "name": "Jupiter",
+    "ra": 14.2,
+    "dec": -12.5,
+    "mag": -2.2
+  },
+  {
+    "id": 7,
+    "proper": "토성",
+    "name": "Saturn",
+    "ra": 16.8,
+    "dec": -19.4,
+    "mag": 0.5
+  },
+  {
+    "id": 8,
+    "proper": "천왕성",
+    "name": "Uranus",
+    "ra": 2.5,
+    "dec": 15.2,
+    "mag": 5.6
+  },
+  {
+    "id": 9,
+    "proper": "해왕성",
+    "name": "Neptune",
+    "ra": 22.8,
+    "dec": -8.1,
+    "mag": 7.8
+  },
+  {
+    "id": 10,
+    "proper": "명왕성",
+    "name": "Pluto",
+    "ra": 19.3,
+    "dec": -22.5,
+    "mag": 14.3
+  },
+  {
+    "id": 11,
+    "proper": "세레스",
+    "name": "Ceres",
+    "ra": 13.2,
+    "dec": 7.3,
+    "mag": 7.2
+  },
+  {
+    "id": 12,
+    "proper": "할리 혜성",
+    "name": "Halley's Comet",
+    "ra": 5.7,
+    "dec": -28.1,
+    "mag": 16.8
+  },
+  {
+    "id": 13,
+    "proper": "베스타",
+    "name": "Vesta",
+    "ra": 10.8,
+    "dec": 4.7,
+    "mag": 6.3
+  },
+  {
+    "id": 14,
+    "proper": "갈릴레오 목성 탐사선",
+    "name": "Galileo Jupiter Probe",
+    "ra": 14.3,
+    "dec": -12.6,
+    "mag": 12.1
+  },
+  {
+    "id": 15,
+    "proper": "이오",
+    "name": "Io",
+    "ra": 14.21,
+    "dec": -12.48,
+    "mag": 5.0
+  },
+  {
+    "id": 16,
+    "proper": "유로파",
+    "name": "Europa",
+    "ra": 14.22,
+    "dec": -12.51,
+    "mag": 5.3
+  },
+  {
+    "id": 17,
+    "proper": "타이탄",
+    "name": "Titan",
+    "ra": 16.82,
+    "dec": -19.38,
+    "mag": 8.4
+  },
+  {
+    "id": 18,
+    "proper": "엔셀라두스",
+    "name": "Enceladus",
+    "ra": 16.79,
+    "dec": -19.41,
+    "mag": 11.8
+  },
+  {
+    "id": 19,
+    "proper": "웹 우주망원경",
+    "name": "James Webb Space Telescope",
+    "ra": 0.5,
+    "dec": 1.2,
+    "mag": 15.9
+  },
+  {
+    "id": 20,
+    "proper": "국제우주정거장",
+    "name": "ISS",
+    "ra": 3.6,
+    "dec": 45.3,
+    "mag": -6.0
+  }
+]
