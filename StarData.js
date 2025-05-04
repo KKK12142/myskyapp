@@ -106,7 +106,7 @@ export const getAllSolarSystemBodiesPositions = (observer) => {
 
 // 검색 기능 - 태양계 천체 및 별 데이터에서 검색
 export const searchCelestial = (query, observer) => {
-  if (!query || query.length < 2) return [];
+  //   if (!query || query.length < 1) return [];
   if (!observer) return [];
 
   const lowerText = query.toLowerCase();

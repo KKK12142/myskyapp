@@ -13,48 +13,44 @@ import * as Location from "expo-location";
 import { Accelerometer, Gyroscope, Magnetometer } from "expo-sensors";
 import AHRS from "ahrs";
 import * as Astro from "astronomy-engine";
-import { Ionicons } from "@expo/vector-icons"; // Make sure to install this: npm install @expo/vector-icons
+import { Ionicons } from "@expo/vector-icons";
 import geomagnetism from "geomagnetism";
-import { searchCelestial } from "./StarData"; // StarData 모듈에서 검색 함수 가져오기
+import { searchCelestial } from "./StarData";
 
 const SAMPLE_RATE_MS = 50; // 33 Hz – snappier response
 
 export default function App() {
-  /********************
-   * 상태 변수
-   *******************/
-  const [cameraFacing, setCameraFacing] = useState("back");
-  const [camPerm, requestCamPerm] = useCameraPermissions();
-  const [locPerm, setLocPerm] = useState(false);
-  const [locPermStatus, setLocPermStatus] = useState(null); // 위치 권한 상태 추가
+  /*-------------- 상태변수 -------------- */
+  const [cameraFacing, setCameraFacing] = useState("back"); // 카메라 방향
+  const [camPerm, requestCamPerm] = useCameraPermissions(); // 카메라 권한
+  const [locPerm, setLocPerm] = useState(false); // 위치 권한 상태
   const [observer, setObserver] = useState(null); // 위도·경도·고도
   const [declination, setDeclination] = useState(0); // 자기-진북 편각
+  const [azAlt, setAzAlt] = useState({ az: 0, alt: 0 }); // 방위각·고도
+  const [eq, setEq] = useState({ ra: 0, dec: 0 }); // 적경·적위
 
-  const [azAlt, setAzAlt] = useState({ az: 0, alt: 0 });
-  const [eq, setEq] = useState({ ra: 0, dec: 0 });
-
-  // 검색 관련 상태 변수
+  /*-------------- 검색관련 상태 -------------- */
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [selectedCelestial, setSelectedCelestial] = useState(null);
 
-  // 애니메이션 값
+  /*-------------- 검색창 애니메이션 -------------- */
   const searchModalOpacity = useRef(new Animated.Value(0)).current;
   const searchModalScale = useRef(new Animated.Value(0.8)).current;
 
+  /*-------------- 센서 이력 -------------- */
   const sensorHistory = useRef({
     azimuth: [],
     altitude: [],
     windowSize: 5,
   });
 
+  /*-------------- 이전 방위각·고도 -------------- */
   const previousAzAlt = useRef({ az: 0, alt: 0 });
   const changeThreshold = 0.3; // 변화량 임계값
 
-  /********************
-   * AHRS 필터 준비
-   *******************/
+  /*-------------- AHRS 필터 준비 -------------- */
   const madgwick = useRef(
     new AHRS({
       sampleInterval: SAMPLE_RATE_MS,
@@ -63,24 +59,23 @@ export default function App() {
     })
   );
 
-  /********************
-   * 이동 평균 필터 적용
-   *******************/
+  /*-------------- 이동 평균 필터 적용 -------------- */
   const applyMovingAverage = (newValue, history, windowSize) => {
     history.push(newValue);
     if (history.length > windowSize) {
       history.shift();
     }
-
     const sum = history.reduce((acc, val) => acc + val, 0);
     return sum / history.length;
   };
-  // 최근 센서 값 저장용
+  /*-------------- 최근 센서 값 저장용 -------------- */
   const last = useRef({ accel: null, gyro: null, mag: null });
 
-  /********************
-   * 변화량 임계값 이상일 때만 업데이트
-   *******************/
+  /*-------------- 센서 워치독 -------------- */
+  const sensorSubs = useRef({ accel: null, gyro: null, mag: null });
+  const lastSensorTs = useRef(Date.now());
+
+  /*-------------- 변화량 임계값 이상일 때만 업데이트 -------------- */
   const shouldUpdateOrientation = (newAz, newAlt) => {
     const azDiff = Math.abs(newAz - previousAzAlt.current.az);
     const altDiff = Math.abs(newAlt - previousAzAlt.current.alt);
@@ -91,12 +86,10 @@ export default function App() {
     return normalizedAzDiff > changeThreshold || altDiff > changeThreshold;
   };
 
-  /********************
-   * 위치 권한 요청 함수
-   *******************/
+  /*-------------- 위치 권한 요청 함수 -------------- */
   const requestLocationPermission = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
-    setLocPermStatus(status);
+    setLocPerm(status);
 
     if (status === "granted") {
       setLocPerm(true);
@@ -111,7 +104,7 @@ export default function App() {
           )
         );
 
-        // 편각 측정 (한 번만)
+        /*-------------- 편각 측정 (한 번만) -------------- */
         const headingData = await Location.getHeadingAsync();
         if (
           headingData &&
@@ -120,6 +113,7 @@ export default function App() {
         ) {
           const dec = headingData.trueHeading - headingData.magHeading;
           setDeclination(dec);
+          console.log("편각 측정 완료:", dec);
         }
       } catch (error) {
         console.error("위치 정보 가져오기 실패:", error);
@@ -127,85 +121,111 @@ export default function App() {
     }
   };
 
-  /********************
-   * 위치·편각 초기화
-   *******************/
+  /*-------------- 위치·편각 초기화 -------------- */
   useEffect(() => {
     requestLocationPermission();
   }, []);
 
-  /********************
-   * 센서 구독 & 필터 갱신
-   *******************/
+  /*-------------- 센서 구독 & 필터 갱신 -------------- */
   useEffect(() => {
-    // helper to attempt fuse when all three latest present
+    // 센서 데이터 융합 함수
     function tryFuse() {
-      const { accel, gyro, mag } = last.current;
-      if (!accel || !gyro || !mag) return;
+      try {
+        const { accel, gyro, mag } = last.current;
+        if (!accel || !gyro || !mag) return;
 
-      // Convert Expo (device) axes → NED axes expected by AHRS
-      const aX = -accel.z,
-        aY = accel.x,
-        aZ = -accel.y; // m/s²
-      const gX = -gyro.z,
-        gY = gyro.x,
-        gZ = -gyro.y; // rad/s
-      const mX = -mag.z,
-        mY = mag.x,
-        mZ = -mag.y; // µT
+        // Convert Expo (device) axes → NED axes expected by AHRS
+        const aX = -accel.z,
+          aY = accel.x,
+          aZ = -accel.y; // m/s²
+        const gX = -gyro.z,
+          gY = gyro.x,
+          gZ = -gyro.y; // rad/s
+        const mX = -mag.z,
+          mY = mag.x,
+          mZ = -mag.y; // µT
 
-      madgwick.current.update(gX, gY, gZ, aX, aY, aZ, mX, mY, mZ);
+        madgwick.current.update(gX, gY, gZ, aX, aY, aZ, mX, mY, mZ);
 
-      const { heading, pitch } = madgwick.current.getEulerAngles(); // rad
-      let azDeg = ((heading * 180) / Math.PI) % 360;
-      azDeg = (azDeg + declination + 360) % 360;
-      const altDeg = (pitch * 180) / Math.PI;
+        const { heading, pitch } = madgwick.current.getEulerAngles(); // rad
+        let azDeg = ((heading * 180) / Math.PI) % 360;
+        azDeg = (azDeg + declination + 360) % 360;
+        const altDeg = (pitch * 180) / Math.PI;
 
-      // 이동 평균 필터 적용
-      const filteredAz = applyMovingAverage(
-        azDeg,
-        sensorHistory.current.azimuth,
-        sensorHistory.current.windowSize
-      );
-      const filteredAlt = applyMovingAverage(
-        altDeg,
-        sensorHistory.current.altitude,
-        sensorHistory.current.windowSize
-      );
-      if (shouldUpdateOrientation(filteredAz, filteredAlt)) {
-        setAzAlt({ az: filteredAz, alt: filteredAlt });
-        previousAzAlt.current = { az: filteredAz, alt: filteredAlt };
+        // 이동 평균 필터 적용
+        const filteredAz = applyMovingAverage(
+          azDeg,
+          sensorHistory.current.azimuth,
+          sensorHistory.current.windowSize
+        );
+        const filteredAlt = applyMovingAverage(
+          altDeg,
+          sensorHistory.current.altitude,
+          sensorHistory.current.windowSize
+        );
+        if (shouldUpdateOrientation(filteredAz, filteredAlt)) {
+          setAzAlt({ az: filteredAz, alt: filteredAlt });
+          previousAzAlt.current = { az: filteredAz, alt: filteredAlt };
+        }
+      } catch (e) {
+        console.error("센서 융합 중 오류", e);
       }
     }
 
-    const accelSub = Accelerometer.addListener((d) => {
-      last.current.accel = d;
-      tryFuse();
-    });
-    const gyroSub = Gyroscope.addListener((d) => {
-      // Expo Gyroscope already provides rad/s, 그대로 사용
-      last.current.gyro = d;
-      tryFuse();
-    });
-    const magSub = Magnetometer.addListener((d) => {
-      last.current.mag = d;
-      tryFuse();
-    });
+    // 센서 구독 시작 함수
+    const startSensor = () => {
+      sensorSubs.current.accel = Accelerometer.addListener((d) => {
+        last.current.accel = d;
+        lastSensorTs.current = Date.now();
+        tryFuse();
+      });
 
-    Accelerometer.setUpdateInterval(SAMPLE_RATE_MS);
-    Gyroscope.setUpdateInterval(SAMPLE_RATE_MS);
-    Magnetometer.setUpdateInterval(SAMPLE_RATE_MS * 2); // 15 Hz
+      sensorSubs.current.gyro = Gyroscope.addListener((d) => {
+        last.current.gyro = d;
+        lastSensorTs.current = Date.now();
+        tryFuse();
+      });
+
+      sensorSubs.current.mag = Magnetometer.addListener((d) => {
+        last.current.mag = d;
+        lastSensorTs.current = Date.now();
+        tryFuse();
+      });
+
+      Accelerometer.setUpdateInterval(SAMPLE_RATE_MS);
+      Gyroscope.setUpdateInterval(SAMPLE_RATE_MS);
+      Magnetometer.setUpdateInterval(SAMPLE_RATE_MS * 2);
+    };
+
+    // 센서 구독 종료 함수
+    const stopSensor = () => {
+      Object.values(sensorSubs.current).forEach((sub) => {
+        if (sub && sub.remove) sub.remove();
+      });
+      sensorSubs.current = { accel: null, gyro: null, mag: null };
+    };
+
+    // 초기 구독 시작
+    startSensor();
+
+    // 워치독 인터벌: 5초 이상 센서 업데이트 없으면 재시작
+    const watchdog = setInterval(() => {
+      const now = Date.now();
+      if (now - lastSensorTs.current > 5000) {
+        console.warn("센서 업데이트 지연 감지, 재시작 시도");
+        stopSensor();
+        startSensor();
+        lastSensorTs.current = Date.now();
+      }
+    }, 6000);
 
     return () => {
-      accelSub.remove();
-      gyroSub.remove();
-      magSub.remove();
+      stopSensor();
+      clearInterval(watchdog);
     };
   }, [declination]);
 
-  /********************
-   * 지평→적도 변환 (azAlt/observer 변경 시)
-   *******************/
+  /*-------------- 지평→적도 변환 (azAlt/observer 변경 시) -------------- */
   useEffect(() => {
     if (!observer) return;
     const { az, alt } = azAlt;
@@ -219,9 +239,7 @@ export default function App() {
     setEq({ ra, dec });
   }, [azAlt, observer]);
 
-  /********************
-   * 검색 기능
-   *******************/
+  /*-------------- 검색 기능 -------------- */
   // 검색창 토글
   const toggleSearch = () => {
     Animated.parallel([
@@ -244,9 +262,9 @@ export default function App() {
     }
   };
 
-  // 검색어 처리 (StarData 모듈 이용)
+  /*-------------- 검색어 처리 (StarData 모듈 이용) -------------- */
   useEffect(() => {
-    if (!searchQuery || searchQuery.length < 2 || !observer) {
+    if (!searchQuery || searchQuery.length < 1 || !observer) {
       setSearchResults([]);
       return;
     }
@@ -255,13 +273,13 @@ export default function App() {
     setSearchResults(results);
   }, [searchQuery, observer]);
 
-  // 천체 선택 처리
+  /*-------------- 천체 선택 처리 -------------- */
   const selectCelestial = (celestial) => {
     setSelectedCelestial(celestial);
     toggleSearch(); // 검색창 닫기
   };
 
-  // 방향 차이 계산 (천체가 선택되었을 때)
+  /*-------------- 방향 차이 계산 (천체가 선택되었을 때) -------------- */
   const calculateDirection = () => {
     if (!selectedCelestial || !eq) return null;
 
@@ -294,7 +312,7 @@ export default function App() {
 
   const directionInfo = selectedCelestial ? calculateDirection() : null;
 
-  // 화살표 위치 계산 (원의 가장자리에 위치)
+  /*-------------- 화살표 위치 계산 (원의 가장자리에 위치) -------------- */
   const calculateArrowPosition = (angle, radius) => {
     // 시계방향으로 0도는 오른쪽(동), 90도는 위(북)에 대응하도록 조정
     const adjustedAngle = ((angle - 90) * Math.PI) / 180;
@@ -304,14 +322,13 @@ export default function App() {
     };
   };
 
-  // 나침반 렌더링 여부
+  /*-------------- 나침반 렌더링 여부 -------------- */
   const showCompass =
     selectedCelestial && directionInfo && directionInfo.distance > 0.5;
   const targetInCircle =
     selectedCelestial && directionInfo && directionInfo.distance <= 3;
-  /********************
-   * 권한 처리
-   *******************/
+
+  /*-------------- 권한 처리 -------------- */
   if (!camPerm?.granted) {
     return (
       <View style={styles.center}>
@@ -323,7 +340,7 @@ export default function App() {
     );
   }
 
-  if (locPermStatus === "denied") {
+  if (locPerm === "denied") {
     return (
       <View style={styles.center}>
         <Text>위치 권한이 필요합니다</Text>
@@ -342,9 +359,7 @@ export default function App() {
     );
   }
 
-  /********************
-   * UI 렌더링
-   *******************/
+  /*-------------- UI 렌더링 -------------- */
   return (
     <View style={styles.container}>
       <CameraView style={styles.camera} facing={cameraFacing}></CameraView>
@@ -513,9 +528,7 @@ export default function App() {
   );
 }
 
-/********************
- * 스타일
- *******************/
+/*-------------- 스타일 -------------- */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
