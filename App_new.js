@@ -13,9 +13,9 @@ import * as Location from "expo-location";
 import { Accelerometer, Gyroscope, Magnetometer } from "expo-sensors";
 import AHRS from "ahrs";
 import * as Astro from "astronomy-engine";
-import { Ionicons } from "@expo/vector-icons";
-// Star database will be loaded from the asset
-import StarData from "./StarData";
+import { Ionicons } from "@expo/vector-icons"; // Make sure to install this: npm install @expo/vector-icons
+import geomagnetism from "geomagnetism";
+import { searchCelestial } from "./StarData"; // StarData 모듈에서 검색 함수 가져오기
 
 const SAMPLE_RATE_MS = 50; // 33 Hz – snappier response
 
@@ -26,6 +26,7 @@ export default function App() {
   const [cameraFacing, setCameraFacing] = useState("back");
   const [camPerm, requestCamPerm] = useCameraPermissions();
   const [locPerm, setLocPerm] = useState(false);
+  const [locPermStatus, setLocPermStatus] = useState(null); // 위치 권한 상태 추가
   const [observer, setObserver] = useState(null); // 위도·경도·고도
   const [declination, setDeclination] = useState(0); // 자기-진북 편각
 
@@ -42,6 +43,15 @@ export default function App() {
   const searchModalOpacity = useRef(new Animated.Value(0)).current;
   const searchModalScale = useRef(new Animated.Value(0.8)).current;
 
+  const sensorHistory = useRef({
+    azimuth: [],
+    altitude: [],
+    windowSize: 5,
+  });
+
+  const previousAzAlt = useRef({ az: 0, alt: 0 });
+  const changeThreshold = 0.3; // 변화량 임계값
+
   /********************
    * AHRS 필터 준비
    *******************/
@@ -49,42 +59,79 @@ export default function App() {
     new AHRS({
       sampleInterval: SAMPLE_RATE_MS,
       algorithm: "Madgwick", // Use Madgwick for beta gain
-      beta: 0.45, // Faster convergence for 30 Hz
+      beta: 0.4, // Faster convergence for 30 Hz
     })
   );
 
+  /********************
+   * 이동 평균 필터 적용
+   *******************/
+  const applyMovingAverage = (newValue, history, windowSize) => {
+    history.push(newValue);
+    if (history.length > windowSize) {
+      history.shift();
+    }
+
+    const sum = history.reduce((acc, val) => acc + val, 0);
+    return sum / history.length;
+  };
   // 최근 센서 값 저장용
   const last = useRef({ accel: null, gyro: null, mag: null });
+
+  /********************
+   * 변화량 임계값 이상일 때만 업데이트
+   *******************/
+  const shouldUpdateOrientation = (newAz, newAlt) => {
+    const azDiff = Math.abs(newAz - previousAzAlt.current.az);
+    const altDiff = Math.abs(newAlt - previousAzAlt.current.alt);
+
+    // 방위각은 circular이므로 특별히 처리
+    const normalizedAzDiff = Math.min(azDiff, 360 - azDiff);
+
+    return normalizedAzDiff > changeThreshold || altDiff > changeThreshold;
+  };
+
+  /********************
+   * 위치 권한 요청 함수
+   *******************/
+  const requestLocationPermission = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    setLocPermStatus(status);
+
+    if (status === "granted") {
+      setLocPerm(true);
+
+      try {
+        const pos = await Location.getCurrentPositionAsync({});
+        setObserver(
+          new Astro.Observer(
+            pos.coords.latitude,
+            pos.coords.longitude,
+            pos.coords.altitude || 0
+          )
+        );
+
+        // 편각 측정 (한 번만)
+        const headingData = await Location.getHeadingAsync();
+        if (
+          headingData &&
+          typeof headingData.trueHeading === "number" &&
+          typeof headingData.magHeading === "number"
+        ) {
+          const dec = headingData.trueHeading - headingData.magHeading;
+          setDeclination(dec);
+        }
+      } catch (error) {
+        console.error("위치 정보 가져오기 실패:", error);
+      }
+    }
+  };
 
   /********************
    * 위치·편각 초기화
    *******************/
   useEffect(() => {
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
-      setLocPerm(true);
-
-      const pos = await Location.getCurrentPositionAsync({});
-      setObserver(
-        new Astro.Observer(
-          pos.coords.latitude,
-          pos.coords.longitude,
-          pos.coords.altitude || 0
-        )
-      );
-
-      // 편각 측정 (한 번만)
-      const headingData = await Location.getHeadingAsync();
-      if (
-        headingData &&
-        typeof headingData.trueHeading === "number" &&
-        typeof headingData.magneticHeading === "number"
-      ) {
-        const dec = headingData.trueHeading - headingData.magHeading;
-        setDeclination(dec);
-      }
-    })();
+    requestLocationPermission();
   }, []);
 
   /********************
@@ -109,16 +156,26 @@ export default function App() {
 
       madgwick.current.update(gX, gY, gZ, aX, aY, aZ, mX, mY, mZ);
 
-      // Use Euler angles for faster, more reliable altitude
       const { heading, pitch } = madgwick.current.getEulerAngles(); // rad
-      // heading: +CW from north (west positive) → convert to CW East‑positive
       let azDeg = ((heading * 180) / Math.PI) % 360;
-      azDeg = (azDeg + declination + 360) % 360; // declination correction
-
-      // pitch is from vertical (+forward/down), we want altitude (+up). alt = -pitch
+      azDeg = (azDeg + declination + 360) % 360;
       const altDeg = (pitch * 180) / Math.PI;
 
-      setAzAlt({ az: azDeg, alt: altDeg });
+      // 이동 평균 필터 적용
+      const filteredAz = applyMovingAverage(
+        azDeg,
+        sensorHistory.current.azimuth,
+        sensorHistory.current.windowSize
+      );
+      const filteredAlt = applyMovingAverage(
+        altDeg,
+        sensorHistory.current.altitude,
+        sensorHistory.current.windowSize
+      );
+      if (shouldUpdateOrientation(filteredAz, filteredAlt)) {
+        setAzAlt({ az: filteredAz, alt: filteredAlt });
+        previousAzAlt.current = { az: filteredAz, alt: filteredAlt };
+      }
     }
 
     const accelSub = Accelerometer.addListener((d) => {
@@ -155,11 +212,10 @@ export default function App() {
     const time = new Date();
 
     const sph = new Astro.Spherical(alt, az, 1);
-    const vHor = Astro.VectorFromHorizon(sph, time, null);
+    const vHor = Astro.VectorFromHorizon(sph, time, "normal");
     const rot = Astro.Rotation_HOR_EQJ(time, observer);
     const vEq = Astro.RotateVector(rot, vHor);
     let { ra, dec } = Astro.EquatorFromVector(vEq);
-    // ra = (24 - ra) % 24;
     setEq({ ra, dec });
   }, [azAlt, observer]);
 
@@ -188,15 +244,14 @@ export default function App() {
     }
   };
 
-  // 검색어 처리
+  // 검색어 처리 (StarData 모듈 이용)
   useEffect(() => {
-    if (!searchQuery || searchQuery.length < 2) {
+    if (!searchQuery || searchQuery.length < 2 || !observer) {
       setSearchResults([]);
       return;
     }
 
-    // StarData 모듈의 searchCelestial 함수 사용
-    const results = StarData.searchCelestial(searchQuery, observer);
+    const results = searchCelestial(searchQuery, observer);
     setSearchResults(results);
   }, [searchQuery, observer]);
 
@@ -225,8 +280,6 @@ export default function App() {
     // 각도 차이의 크기
     const distance = Math.sqrt(raDiff * raDiff + decDiff * decDiff);
 
-    // 방향 (상대적인 방향을 화살표로 표시)
-
     // 방향각 계산 (라디안) - 화살표 위치 계산에 사용
     const angle = Math.atan2(decDiff, raDiff);
 
@@ -254,52 +307,8 @@ export default function App() {
   // 나침반 렌더링 여부
   const showCompass =
     selectedCelestial && directionInfo && directionInfo.distance > 0.5;
-
-  // 천체가 나침반 원 안에 있는지 확인 (거리 5도 이하)
   const targetInCircle =
-    selectedCelestial && directionInfo && directionInfo.distance <= 5;
-
-  // 선택된 천체가 태양계 천체일 경우 실시간 위치 업데이트
-  useEffect(() => {
-    if (!selectedCelestial || !selectedCelestial.isSolarSystemBody || !observer)
-      return;
-
-    console.log(`실시간 위치 업데이트 시작: ${selectedCelestial.name}`);
-
-    // 1초마다 위치 업데이트
-    const intervalId = setInterval(() => {
-      const updatedPosition = StarData.calculateSolarSystemBodyPosition(
-        selectedCelestial.name,
-        observer
-      );
-
-      if (updatedPosition) {
-        // 업데이트된 위치 정보로 selectedCelestial 갱신
-        setSelectedCelestial((prev) => {
-          // 이전 상태와 같은 경우 업데이트 방지 (무한 렌더링 방지)
-          if (
-            prev.ra === updatedPosition.ra &&
-            prev.dec === updatedPosition.dec
-          ) {
-            return prev;
-          }
-
-          return {
-            ...prev,
-            ra: updatedPosition.ra,
-            dec: updatedPosition.dec,
-          };
-        });
-      }
-    }, 1000);
-
-    // 컴포넌트 언마운트 또는 의존성 변경 시 인터벌 정리
-    return () => {
-      console.log(`실시간 위치 업데이트 중지: ${selectedCelestial.name}`);
-      clearInterval(intervalId);
-    };
-  }, [selectedCelestial, observer]);
-
+    selectedCelestial && directionInfo && directionInfo.distance <= 3;
   /********************
    * 권한 처리
    *******************/
@@ -313,6 +322,18 @@ export default function App() {
       </View>
     );
   }
+
+  if (locPermStatus === "denied") {
+    return (
+      <View style={styles.center}>
+        <Text>위치 권한이 필요합니다</Text>
+        <TouchableOpacity onPress={requestLocationPermission}>
+          <Text style={{ color: "blue" }}>권한 요청</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (!locPerm || !observer) {
     return (
       <View style={styles.center}>
@@ -344,10 +365,6 @@ export default function App() {
             <Text style={styles.txt}>
               적위: {selectedCelestial.dec.toFixed(2)}°
             </Text>
-
-            <Text style={styles.txt}>
-              {/* 방향: {directionInfo.angleDeg.toFixed(0)}° */}
-            </Text>
           </>
         )}
       </View>
@@ -355,11 +372,11 @@ export default function App() {
       {/* 방향 나침반 (화면 중앙) */}
       {showCompass && (
         <View style={styles.compassContainer}>
-          {/* 원형 테두리 - 천체가 원 안에 있으면 빨간색으로 변경 */}
+          {/* 원형 테두리 */}
           <View
             style={[
               styles.compassCircle,
-              targetInCircle && { borderColor: "red" },
+              targetInCircle && { borderColor: "red", borderWidth: 3 },
             ]}
           />
 
@@ -367,7 +384,7 @@ export default function App() {
           <View style={styles.crosshairHorizontal} />
           <View style={styles.crosshairVertical} />
 
-          {/* 방향 화살표 - 천체가 원 안에 있으면 표시하지 않음 */}
+          {/* 방향 화살표 */}
           {!targetInCircle && (
             <View
               style={[
